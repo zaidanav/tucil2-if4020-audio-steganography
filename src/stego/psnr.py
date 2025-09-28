@@ -1,6 +1,5 @@
-def psnr_from_mp3_paths(cover_path: str, stego_path: str):
+def psnr_mp3_paths(cover_path: str, stego_path: str):
     try:
-        import numpy as np
         from pydub import AudioSegment
     except Exception:
         return None
@@ -10,12 +9,12 @@ def psnr_from_mp3_paths(cover_path: str, stego_path: str):
     except Exception:
         return None
     import numpy as np
-    ax = np.array(a, dtype=np.float64)
-    bx = np.array(b, dtype=np.float64)
+    ax = np.array(a, dtype=float)
+    bx = np.array(b, dtype=float)
     n = min(len(ax), len(bx))
     ax = ax[:n]; bx = bx[:n]
-    mse = np.mean((ax - bx) ** 2)
-    if mse == 0:
-        return float('inf')
+    mse = ((ax - bx) ** 2).mean()
+    if mse == 0: return float('inf')
     MAX = 32767.0
-    return 10 * np.log10((MAX * MAX) / mse)
+    import math
+    return 10.0 * math.log10((MAX*MAX)/mse)

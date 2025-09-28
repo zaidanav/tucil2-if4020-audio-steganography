@@ -1,9 +1,9 @@
 [project]
-name = "stega-gui-mp3"
-version = "0.1.0"
-description = "Steganography (IF4020 Tucil II)"
+name = "tucil2-steganography"
+version = "1.0.0"
+description = "Tucil II IF4020 - MP3 multiple-LSB steganography"
 requires-python = ">=3.10"
 dependencies = ["numpy", "pydub"]
 
 [project.scripts]
-stega-gui = "app.main:main"
+tucil2-stego = "gui.app:main"
