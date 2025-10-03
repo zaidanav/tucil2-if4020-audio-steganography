@@ -10,7 +10,9 @@ from stego.pipeline import (
     compute_capacity_for_file,
     embed_to_file,
     extract_to_file,
+    check_embed_feasibility,
 )
+from stego.capability_exceptions import CapacityError
 
 class App(tk.Tk):
     def __init__(self):
@@ -107,8 +109,9 @@ class App(tk.Tk):
         # actions
         ttk.Button(f, text="Analyze Cover", command=self._analyze).grid(row=4, column=0, **pad)
         ttk.Button(f, text="Compute Capacity", command=self._capacity).grid(row=4, column=1, **pad)
+        ttk.Button(f, text="Check Feasibility", command=self._check_feasibility).grid(row=4, column=2, **pad)
         self.btn_embed = ttk.Button(f, text="Embed", command=self._embed, style="Accent.TButton")
-        self.btn_embed.grid(row=4, column=2, **pad)
+        self.btn_embed.grid(row=4, column=3, **pad)
 
         for i in range(6):
             f.grid_columnconfigure(i, weight=0)
@@ -186,7 +189,8 @@ class App(tk.Tk):
                     f"duration={info['duration_sec']:.2f}s"
                 ))
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Analyze", str(e)))
+                error_msg = str(e)  # Capture error message in local variable
+                self.after(0, lambda msg=error_msg: messagebox.showerror("Analyze", msg))
         threading.Thread(target=task, daemon=True).start()
 
     def _capacity(self):
@@ -199,7 +203,56 @@ class App(tk.Tk):
                 cap = compute_capacity_for_file(cover, n)
                 self.after(0, lambda: self._log_e(f"Capacity (PCM samples, n={n}) = {cap} bits ({cap//8} bytes)"))
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Capacity", str(e)))
+                error_msg = str(e)  # Capture error message in local variable
+                self.after(0, lambda msg=error_msg: messagebox.showerror("Capacity", msg))
+        threading.Thread(target=task, daemon=True).start()
+
+    def _check_feasibility(self):
+        cover = self.cover_var.get().strip()
+        secret = self.secret_var.get().strip()
+        n = self.n_var.get()
+        key = self.key_var.get()
+        enc = self.enc_var.get()
+        rnd = self.rnd_var.get()
+        
+        if not cover or not secret:
+            messagebox.showwarning("Missing", "Pilih cover audio dan secret file dulu."); return
+        
+        def task():
+            try:
+                result = check_embed_feasibility(cover, secret, key, n, enc, rnd)
+                
+                status_icon = "✅" if result['fits'] else "❌"
+                if result['fits'] and result['utilization_percent'] > 95:
+                    status_icon = "⚠️"
+                elif result['fits'] and result['utilization_percent'] > 80:
+                    status_icon = "🟡"
+                
+                feasibility_msg = (
+                    f"{status_icon} Feasibility Check Results\n\n"
+                    f"📊 Kapasitas Analysis:\n"
+                    f"• Cover capacity: {result['capacity_bits']:,} bits ({result['capacity_bits']//8:,} bytes)\n"
+                    f"• Payload needed: {result['need_bits']:,} bits ({result['need_bits']//8:,} bytes)\n"
+                    f"• Margin: {result['margin_bits']:,} bits ({abs(result['margin_bits'])//8:,} bytes)\n"
+                    f"• Utilization: {result['utilization_percent']:.1f}%\n\n"
+                    f"🎯 Status: {'Dapat di-embed' if result['fits'] else 'Tidak dapat di-embed'}\n"
+                    f"💡 {result['recommendation']}\n\n"
+                    f"📋 Settings:\n"
+                    f"• n_lsb: {n}\n"
+                    f"• Encryption: {'Yes' if enc else 'No'}\n"
+                    f"• Random start: {'Yes' if rnd else 'No'}"
+                )
+                
+                self.after(0, lambda msg=feasibility_msg: messagebox.showinfo("Feasibility Check", msg))
+                
+                # Also log summary to the text area
+                summary = f"Feasibility: {result['utilization_percent']:.1f}% utilization, {'✅ OK' if result['fits'] else '❌ Too big'}"
+                self.after(0, lambda msg=summary: self._log_e(msg))
+                
+            except Exception as e:
+                error_msg = str(e)
+                self.after(0, lambda msg=error_msg: messagebox.showerror("Feasibility Check", msg))
+        
         threading.Thread(target=task, daemon=True).start()
 
     def _set_enabled(self, enabled: bool):
@@ -227,14 +280,48 @@ class App(tk.Tk):
         def task():
             self.after(0, lambda: self._set_enabled(False))
             try:
+                # Pre-check kapasitas untuk memberikan feedback yang lebih baik
+                self.after(0, lambda: self._log("Checking capacity..."))
+                feasibility = check_embed_feasibility(cover, secret, key, n, enc, rnd)
+                
+                if not feasibility['fits']:
+                    # Show detailed capacity error
+                    capacity_msg = (
+                        f"❌ File secret terlalu besar!\n\n"
+                        f"Kapasitas cover: {feasibility['capacity_bits']:,} bits ({feasibility['capacity_bits']//8:,} bytes)\n"
+                        f"Diperlukan: {feasibility['need_bits']:,} bits ({feasibility['need_bits']//8:,} bytes)\n"
+                        f"Kelebihan: {abs(feasibility['margin_bits']):,} bits ({abs(feasibility['margin_bits'])//8:,} bytes)\n"
+                        f"Utilisasi: {feasibility['utilization_percent']:.1f}%\n\n"
+                        f"💡 Solusi:\n"
+                        f"• Gunakan file secret yang lebih kecil\n"
+                        f"• Atau naikkan n_lsb (saat ini: {n})\n"
+                        f"• Atau gunakan cover audio yang lebih panjang"
+                    )
+                    self.after(0, lambda msg=capacity_msg: messagebox.showerror("Kapasitas Tidak Cukup", msg))
+                    return
+                elif feasibility['utilization_percent'] > 80:
+                    # Show warning for high utilization
+                    warning_msg = (
+                        f"⚠️ Peringatan: Utilisasi tinggi ({feasibility['utilization_percent']:.1f}%)\n\n"
+                        f"Embedding mungkin memakan waktu lebih lama.\n"
+                        f"Lanjutkan?"
+                    )
+                    # Note: messagebox calls need to be in main thread, so we'll proceed anyway
+                    self.after(0, lambda msg=warning_msg: self._log_e(f"Warning: {msg.replace(chr(10), ' ')}"))
+                
                 self.after(0, lambda: self._log("Embedding..."))
                 psnr = embed_to_file(cover, secret, out, key, n, enc, rnd, compute_psnr=True)
                 self.after(0, lambda: self._log_e(f"Done. Stego Audio saved to: {out if out.lower().endswith('.wav') else out + '.wav'}"))
                 if psnr is not None:
                     self.after(0, lambda: self._log_e(f"PSNR: {psnr:.2f} dB"))
                 self.after(0, lambda: messagebox.showinfo("Embed", "Selesai. Stego audio telah disimpan. Gunakan file hasil embed ini untuk proses Extract."))
+            except CapacityError as e:
+                # Handle capacity errors specifically with better formatting
+                error_msg = str(e)
+                self.after(0, lambda msg=error_msg: messagebox.showerror("Kapasitas Tidak Cukup", msg))
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Embed", str(e)))
+                error_msg = str(e)  # Capture error message in local variable
+                self.after(0, lambda msg=error_msg: messagebox.showerror("Embed", msg))
             finally:
                 self.after(0, lambda: self._set_enabled(True))
         threading.Thread(target=task, daemon=True).start()
@@ -253,7 +340,8 @@ class App(tk.Tk):
                 self.after(0, lambda: self._log_e(f"Extract OK → {op} (flags={flags})"))
                 self.after(0, lambda: messagebox.showinfo("Extract", f"Berhasil! File tersimpan di:\n{op}"))
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Extract", str(e)))
+                error_msg = str(e)  # Capture error message in local variable
+                self.after(0, lambda msg=error_msg: messagebox.showerror("Extract", msg))
             finally:
                 self.after(0, lambda: self._set_enabled(True))
         threading.Thread(target=task, daemon=True).start()
@@ -267,7 +355,8 @@ class App(tk.Tk):
             try:
                 self.player_cover.play(path)
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Play cover", str(e)))
+                error_msg = str(e)  # Capture error message in local variable
+                self.after(0, lambda msg=error_msg: messagebox.showerror("Play cover", msg))
         threading.Thread(target=task, daemon=True).start()
 
     def _stop_cover(self):
@@ -284,7 +373,8 @@ class App(tk.Tk):
             try:
                 self.player_stego.play(path)
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Play stego", str(e)))
+                error_msg = str(e)  # Capture error message in local variable
+                self.after(0, lambda msg=error_msg: messagebox.showerror("Play stego", msg))
         threading.Thread(target=task, daemon=True).start()
 
     def _stop_stego(self):
