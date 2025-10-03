@@ -1,0 +1,60 @@
+PSPL
+
+
+
+
+
+
+Buat reset frontend abis ubah api
+
+& minikube -p minikube docker-env | Invoke-Expression
+
+kubectl delete deployment frontend-deployment
+
+docker build --no-cache -t your-username/frontend:latest ./frontend
+
+kubectl apply -f frontend-deployment.yaml
+
+minikube service frontend-service
+
+
+
+
+
+
+
+buat curl backend
+
+ minikube service backend-service --url
+
+
+
+
+
+
+
+
+
+
+
+buat setup semuanya 
+
+minikube delete
+
+minikube start --driver=docker
+
+& minikube -p minikube docker-env | Invoke-Expression
+
+docker build -t your-username/backend:latest ./backend
+docker build -t your-username/frontend:latest ./frontend
+
+kubectl apply -f db-pvc.yaml
+kubectl apply -f db-configmap.yaml
+kubectl apply -f db-deployment.yaml
+kubectl apply -f db-service.yaml
+kubectl apply -f backend-deployment.yaml
+kubectl apply -f backend-service.yaml
+kubectl apply -f frontend-deployment.yaml
+kubectl apply -f frontend-service.yaml
+
+kubectl get pods
